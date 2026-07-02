@@ -1,0 +1,27 @@
+{
+  "name": "appscreenshotstudio",
+  "description": "Generate App Store and Play Store screenshots from your AI agent, then refine them by chatting: describe, see options, refine, ship. Bundles the AppScreenshotStudio MCP server. Needs an API key (Growth or Pro plan).",
+  "version": "0.5.1",
+  "author": {
+    "name": "AppScreenshotStudio"
+  },
+  "homepage": "https://appscreenshotstudio.com/docs/mcp",
+  "repository": "https://github.com/TWWorks-org/mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "app-store",
+    "play-store",
+    "app-store-screenshots",
+    "aso",
+    "screenshot-generator"
+  ],
+  "mcpServers": {
+    "appscreenshotstudio": {
+      "command": "npx",
+      "args": ["-y", "@appscreenshotstudio/mcp"],
+      "env": {
+        "APPSCREENSHOTSTUDIO_API_KEY": "${APPSCREENSHOTSTUDIO_API_KEY}"
+      }
+    }
+  }
+}

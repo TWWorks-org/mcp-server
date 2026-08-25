@@ -1,2 +1,10 @@
 node_modules/
 dist/
+
+# The MCP registry publishing key lives in this directory. The parent repo's
+# .gitignore catches it there, but this file is what protects a standalone
+# clone of the public repo, where that parent rule does not apply.
+*.pem
+
+# Local Claude Code settings, not part of the published plugin.
+.claude/

@@ -64,17 +64,23 @@ Call the `generate-screenshots` MCP tool with:
 - `features`: top 3-5 features as array
 - `brand_colors`: `{ primary, secondary?, accent? }` from theme files
 - `mood`: user's chosen mood
-- `device_id`: `"iphone-6.9"` (default), `"ipad-13"`, `"android-phone"`, `"android-tablet-10"`, `"apple-watch-ultra"`
+- `device_id`: `"iphone-6.9"` (default), `"iphone-6.3"`, `"ipad-13"`, `"android-phone"`, `"pixel-11-pro"`, `"galaxy-s26-ultra"`, `"android-tablet-10"` (7"), `"android-tablet-large"` (10"), `"apple-watch-ultra"`
 - `count`: number of cards (3-10)
 - `story_flow`: `"auto"` (default), `"hero-intro"`, `"problem-solution"`, `"benefit-first"`, etc.
 - `codebase_context`: the full context object from Step 1
+- `images`: local file paths, each tagged with a `kind`. Three kinds, three destinations:
+  - `kind: "screenshot"` (default): real app UI, placed inside the device frames automatically, in order. If screenshots exist in the repo (fastlane/screenshots, store assets, README images), attach them here so the set comes back with real UI in the phones instead of empty frames.
+  - `kind: "mascot"`: the app's character, placed peeking from behind the hook card's phone and on the closing card. Transparent PNG.
+  - `kind: "reference"`: a look to **match**, never placed in a frame. Use this for a competitor's App Store listing, a design the user pointed you at, or any image that already shows a phone with a headline above it. It is read for palette, type weight, headline length and composition.
+
+**Do not tag a competitor's store screenshots as `screenshot`.** They are finished marketing cards, so placing one inside a device frame nests a phone inside a phone and ships someone else's artwork. If the user says "make it look like X" and hands you X's listing, that is `kind: "reference"`. Their own raw captures are `kind: "screenshot"`, and a message can carry both.
 
 ### Step 4: Upload App Screenshots
 
-If the user has actual app screenshots (from Simulator, emulator, or screen captures), upload them into the device frames using `upload-screenshots`:
+If screenshots were attached in Step 3 they are already in the frames. This step covers swaps and late additions. `upload-screenshots`:
 - Takes local file paths and maps them to card indices
-- Fills the empty device mockups with real app UI
-- Free — no credit cost
+- Fills or replaces the device mockups' app UI per card
+- Free: no credit cost
 
 ### Step 5: Show and Iterate (the core loop)
 
@@ -91,11 +97,11 @@ Hand off to the builder only when it genuinely helps: share the project URL and 
 
 ### Step 6: Export
 
-`render-screenshots` is also the export: it returns download URLs for the final PNGs at exact App Store dimensions, and it is free. Give the user those URLs. The builder project URL is the alternative when they want to compare the full set visually or hand-tweak before downloading.
+`render-screenshots` is also the export: it returns download URLs for the final PNGs at exact App Store dimensions, and it is free. Give the user those URLs and note they stay valid for 7 days, so download promptly (re-rendering later is free if a URL has expired). The builder project URL is the alternative when they want to compare the full set visually or hand-tweak before downloading.
 
 ## Headline Rules
 
-Headlines must pass the "one second test" — readable at thumbnail size.
+Headlines must pass the "one second test": readable at thumbnail size.
 
 **Three styles:**
 1. Paint a moment: "Morning runs handled", "Your kitchen simplified"

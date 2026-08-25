@@ -48,7 +48,7 @@ Add to your MCP config (`.cursor/mcp.json`, `settings.json`, etc.):
 
 Get a research checklist and strategy guide before generating. Returns file patterns to search for across tech stacks, story flow recommendations per app category, headline tips, and the `codebase_context` schema to fill in.
 
-**Free — no API call or credits.**
+**Free: no API call or credits.**
 
 ### `generate-screenshots`
 
@@ -65,6 +65,7 @@ Create a complete set of App Store screenshots. The agent researches your codeba
 | `count` | number | No | Number of cards, 3-10 (default: 5) |
 | `story_flow` | string | No | Narrative structure (default: `auto`) |
 | `codebase_context` | object | No | App context from codebase research (see below) |
+| `images` | array | No | Local image files to attach (see [`images`](#images) below) |
 
 **Costs 5 credits.**
 
@@ -85,6 +86,31 @@ Pass this for dramatically better screenshots. The context is persisted on the p
 | `ui_style` | "dark mode with neon accents", "clean minimal", etc. |
 | `primary_user_flow` | Main user journey through the app |
 
+#### `images`
+
+Attach local image files as `{ file_path, kind }`. Max 5 per call. The `kind` decides where the image goes, and getting it wrong is the one mistake with a visible cost:
+
+| `kind` | What it is | Where it goes |
+|---|---|---|
+| `screenshot` (default) | Your real app UI, straight from a simulator or device | Inside the generated device frames, in attachment order |
+| `mascot` | Your app's character or logo creature | Decoratively around the phones (peeking from behind the hook card, beside the closing card). Use a transparent PNG |
+| `reference` | A look to **match**: a competitor's App Store listing, a design the user pointed you at, any image that already shows a phone with a headline above it | Nowhere. It is read for palette, type weight, headline length and composition, and never placed in a frame |
+
+**Do not send a competitor's store screenshots as `screenshot`.** They are finished marketing cards, so putting one inside a device frame nests a phone inside a phone and ships someone else's artwork into your listing. If the user says "make it look like this app" and hands you that app's listing, it is `reference`. Their own raw captures are `screenshot`. One call can carry both, and the reference ones are simply skipped when the frames get filled.
+
+If you send a reference without tagging it, the server classifies it from the image and holds it out anyway, and says so in the reply. Tagging it is the deterministic path.
+
+```jsonc
+{
+  "app_name": "Kestrel",
+  "images": [
+    { "file_path": "/Users/me/competitor-listing-1.png", "kind": "reference" },
+    { "file_path": "/Users/me/Desktop/today.png",        "kind": "screenshot" },
+    { "file_path": "/Users/me/Desktop/calendar.png",     "kind": "screenshot" }
+  ]
+}
+```
+
 ### `edit-screenshots`
 
 Make changes to an existing project with natural language. Optionally target specific cards.
@@ -95,6 +121,7 @@ Make changes to an existing project with natural language. Optionally target spe
 | `message` | string | Yes | What to change |
 | `card_indices` | number[] | No | Target specific cards by index (0-based). Omit to edit all. |
 | `codebase_context` | object | No | App context to enrich the edit (same schema as above) |
+| `images` | array | No | Same shape as above. Screenshots fill the device frames of regenerated cards; a reference only informs the design |
 
 **Costs 5 credits.**
 
@@ -105,7 +132,7 @@ Upload local app screenshots (from Simulator, emulator, or screen captures) into
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `project_id` | string | Yes | From a previous `generate-screenshots` call |
-| `screenshots` | array | Yes | Array of `{ file_path, card_index }` — maps local files to cards |
+| `screenshots` | array | Yes | Array of `{ file_path, card_index }`: maps local files to cards |
 
 Each item in `screenshots`:
 
@@ -128,7 +155,7 @@ Export to high-resolution PNGs. Returns download URLs.
 
 ### `get-project`
 
-Retrieve a project's current state — cards, elements, backgrounds, and metadata.
+Retrieve a project's current state: cards, elements, backgrounds, and metadata.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -187,7 +214,10 @@ Once installed, use `/appscreenshotstudio` in Claude Code or just ask "generate 
 | `iphone-6.3` | iPhone 17 Pro | 1206x2622 | Optional |
 | `ipad-13` | iPad Pro 13" | 2064x2752 | App Store |
 | `android-phone` | Android Phone | 1080x2340 | Play Store |
+| `pixel-11-pro` | Google Pixel 11 Pro | 1280x2856 | Play Store |
+| `galaxy-s26-ultra` | Samsung Galaxy S26 Ultra | 1440x3120 | Play Store |
 | `android-tablet-10` | Android Tablet 7" | 1200x1920 | Play Store |
+| `android-tablet-large` | Android Tablet 10" | 1600x2560 | Play Store |
 | `apple-watch-ultra` | Apple Watch Ultra 2 | 410x502 | App Store |
 
 ## Design Features
@@ -196,29 +226,47 @@ The AI generates professional screenshots using:
 
 - **94 shape types** (17 core + 77 decorative across 13 categories): nature (leaf, flower, tree), weather (cloud, sun, snowflake), celebration (sparkle, trophy, crown, confetti), social (chat-bubble, music-note), tech (rocket, code-bracket), health (dumbbell, flame), food (coffee-cup, pizza), travel (airplane, compass), finance (dollar-sign, piggy-bank), education (graduation-cap, lightbulb), pets (paw-print, cat-face), emoji (smiley, fire-emoji), abstract (swirl, infinity, gem)
 - **Rich text**: per-word color, bold, italic, underline, highlight pills (colored backgrounds behind words), gradient fills, text stroke outlines, emoji
-- **Compound trust signals**: statRow, laurelStat, starRating, quote, pressBanner, featureGrid, beforeAfterSplit, stepList — auto-positioned per layout
-- **Frame color**: recolor the device frame — `natural` (default), `black`, `white`, `gold`. Requires Growth plan or higher.
+- **Compound trust signals**: statRow, laurelStat, starRating, quote, pressBanner, credential, guarantee. Auto-positioned per layout, and opt-in: supply the real figure or the card ships clean
+- **Background textures**: diagonal-stripe, crosshatch, checkerboard, zigzag, hairline-grid, dot-grid, waves, grain, radial-rays, concentric-circles. Ask for one explicitly; they are subtle by design and run continuously across the set.
+- **Frame color**: recolor the device frame: `natural` (default), `black`, `white`, `gold`. Requires Growth plan or higher.
 - **Panoramics**: slice one wide image across cards (chat tags the cards, then `generate-panoramic-background` creates and slices the image) or stretch a foreground element across adjacent cards (`apply_element_span`). Gallery gutters are accounted for.
 - **9 device perspectives**: flat, left-15, left-30, right-15, right-30, isometric, top-down, landscape-left, landscape-right
-- **13 layouts**: `text-top-device-bottom`, `text-top-device-tilted`, `device-hero`, `social-proof`, `review-clip`, `screen-hero`, `lifestyle-hero`, `feature-grid`, `before-after`, `stats-hero`, `metric-badge`, `annotated-feature`, `step-flow`. The AI varies `deviceScale`, `deviceSide`, `textPosition`, and `textAlign` per card so a set never looks like duplicates.
+- **10 layouts**: `text-top-device-bottom`, `text-top-device-tilted`, `device-hero`, `social-proof`, `review-clip`, `screen-hero`, `lifestyle-hero`, `stats-hero`, `metric-badge`, `annotated-feature`. The AI also varies the device angle, `deviceScale`, `deviceSide`, `textPosition`, and `textAlign` per card so a set never looks like duplicates.
 
 ## Workflow
 
-1. **Research** — Agent calls `prepare-screenshot-brief`, then searches your codebase for app name, features, colors, screens, and audience
-2. **Generate** — Agent calls `generate-screenshots` with `codebase_context` for app-specific designs
-3. **Iterate** — Agent calls `edit-screenshots` to refine (codebase context carries over automatically)
-4. **Upload** — Agent calls `upload-screenshots` with local file paths to fill device mockups
-5. **Export** — Agent calls `render-screenshots` or click "Download All" in the web app
+1. **Research**: Agent calls `prepare-screenshot-brief`, then searches your codebase for app name, features, colors, screens, and audience
+2. **Generate**: Agent calls `generate-screenshots` with `codebase_context` for app-specific designs
+3. **Iterate**: Agent calls `edit-screenshots` to refine (codebase context carries over automatically)
+4. **Upload**: Agent calls `upload-screenshots` with local file paths to fill device mockups
+5. **Export**: Agent calls `render-screenshots` or click "Download All" in the web app
 
 ## Security
 
 - API key stays on your machine (environment variable)
 - All API calls over HTTPS
-- stdio transport — no network ports opened
+- stdio transport: no network ports opened
 - Revoke keys anytime in Settings
+
+## Privacy Policy
+
+Full policy: [appscreenshotstudio.com/privacy](https://appscreenshotstudio.com/privacy). What that means for this MCP server specifically:
+
+**What is collected.** Only the arguments you pass to a tool. That means the app context you or your agent supply (app name, description, features, brand colors, mood, and any `codebase_context` fields), the natural-language messages you send to `edit-screenshots`, background prompts, and any image files you explicitly attach through `images` or `upload-screenshots`.
+
+**What is not collected.** The server reads only the file paths you hand it. It does not scan, index, or upload your repository, and it opens no network ports. Your API key is read from an environment variable and stays on your machine; it is sent only as an auth header to appscreenshotstudio.com.
+
+**Where it goes.** One host: `https://appscreenshotstudio.com`. There is no telemetry endpoint and no third-party analytics in this package.
+
+**Third-party processing.** Designs and edits are generated by an LLM, AI backgrounds by Google Gemini, and stock backgrounds are fetched from Pexels when you pass `pexels_query`. Files are stored via our storage provider. See the full policy for the current list.
+
+**Retention.** Projects persist in your account until you delete them. Rendered PNG download URLs expire after 7 days.
+
+**Contact.** [support@kindlebookillustrations.com](mailto:support@kindlebookillustrations.com)
 
 ## Links
 
+- [Screenshot API + MCP overview](https://appscreenshotstudio.com/api)
 - [Full docs](https://appscreenshotstudio.com/docs/mcp)
 - [REST API reference](https://appscreenshotstudio.com/docs/api)
 - [Pricing](https://appscreenshotstudio.com/pricing)

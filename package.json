@@ -1,13 +1,17 @@
 {
   "name": "@appscreenshotstudio/mcp",
-  "version": "0.5.1",
+  "version": "0.8.1",
+  "mcpName": "com.appscreenshotstudio/mcp",
   "description": "MCP server for generating App Store screenshots via AppScreenshotStudio",
   "type": "module",
   "license": "MIT",
   "homepage": "https://appscreenshotstudio.com/docs/mcp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/appscreenshotstudio/mcp-server"
+    "url": "https://github.com/TWWorks-org/mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/TWWorks-org/mcp-server/issues"
   },
   "keywords": [
     "mcp",

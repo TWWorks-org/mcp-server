@@ -35,14 +35,20 @@ const API_BASE = process.env.APPSCREENSHOTSTUDIO_URL || 'https://appscreenshotst
 const API_KEY = process.env.APPSCREENSHOTSTUDIO_API_KEY;
 
 // ─── Devices (mirrors lib/device-specs.ts) ─────────────────────────────────────
-// ⚠️ Keep in sync: lib/device-specs.ts, mcp-server/README.md, docs/api page, docs/mcp page
+// ⚠️ Keep in sync: lib/device-specs.ts, mcp-server/README.md, docs/api page, docs/mcp page,
+//    mcp-server/skills/appscreenshotstudio/SKILL.md (ships in the npm package, so it drifts unseen),
+//    public/api-docs.md (served raw at /api-docs.md, linked from nowhere, so it drifts unseen too)
+//    Enforced by `npm run test:device-specs`, which reads all six files.
 
 const DEVICES = [
   { id: 'iphone-6.9', name: 'iPhone 16 Pro Max', width: 1260, height: 2736, category: 'iphone', required: true },
   { id: 'iphone-6.3', name: 'iPhone 17 Pro', width: 1206, height: 2622, category: 'iphone', required: false },
   { id: 'ipad-13', name: 'iPad Pro 13"', width: 2064, height: 2752, category: 'ipad', required: true },
   { id: 'android-phone', name: 'Android Phone', width: 1080, height: 2340, category: 'android-phone', required: true },
+  { id: 'pixel-11-pro', name: 'Google Pixel 11 Pro', width: 1280, height: 2856, category: 'android-phone', required: false },
+  { id: 'galaxy-s26-ultra', name: 'Samsung Galaxy S26 Ultra', width: 1440, height: 3120, category: 'android-phone', required: false },
   { id: 'android-tablet-10', name: 'Android Tablet 7"', width: 1200, height: 1920, category: 'android-tablet', required: true },
+  { id: 'android-tablet-large', name: 'Android Tablet 10"', width: 1600, height: 2560, category: 'android-tablet', required: false },
   { id: 'apple-watch-ultra', name: 'Apple Watch Ultra 2', width: 410, height: 502, category: 'apple-watch', required: true },
 ] as const;
 
@@ -50,7 +56,7 @@ const VALID_DEVICE_IDS = DEVICES.map(d => d.id);
 
 // Aliases callers commonly pass instead of the canonical id: display-name
 // derivations ("iPhone 16 Pro Max" -> iphone-16-pro-max) and legacy slugs.
-// Mirrors MARKETING_TO_SPEC in lib/device-specs.ts — keep the two in sync.
+// Mirrors MARKETING_TO_SPEC in lib/device-specs.ts. Keep the two in sync.
 const DEVICE_ALIASES: Record<string, string> = {
   'iphone-16-pro': 'iphone-6.9',
   'iphone-16-pro-max': 'iphone-6.9',
@@ -134,7 +140,7 @@ interface GenerateInput {
   codebase_context?: CodebaseContext;
 }
 
-function buildDesignMessage(input: GenerateInput): string {
+function buildDesignMessage(input: GenerateInput, hasScreenshotImages = false): string {
   const parts: string[] = [];
 
   parts.push(`Create ${input.count} App Store screenshots for my app.`);
@@ -185,17 +191,67 @@ function buildDesignMessage(input: GenerateInput): string {
     parts.push('\nUse the research context above to create screenshots that accurately represent this specific app. Headlines, features, and visual style should reflect what the app actually does and looks like.');
   }
 
-  parts.push(`\nAll device mockups should have screenshotImage: null — the developer will upload actual app screenshots later.`);
+  if (hasScreenshotImages) {
+    parts.push(`\nMy app screenshots are attached, and they are placed into the device frames automatically.`);
+  } else {
+    parts.push(`\nAll device mockups should have screenshotImage: null. The developer will upload actual app screenshots later.`);
+  }
   parts.push(`Please include projectMeta with brand colors, mood, appCategory, and a rich globalVisualTheme description.`);
 
   return parts.join('\n');
 }
 
+/** Read local image files into the chat API's images payload. Same file
+ *  handling as upload-screenshots; kind rides through to server-side
+ *  placement (screenshots fill the generated device frames, mascots get
+ *  placed decoratively around the phones, references are read for taste and
+ *  never placed). */
+type ChatImageKind = 'screenshot' | 'mascot' | 'reference';
+function readImagesForChat(
+  images?: Array<{ file_path: string; kind: ChatImageKind }>,
+): { payload: Array<{ dataUrl: string; mediaType: string; kind: ChatImageKind }>; errors: string[] } {
+  const payload: Array<{ dataUrl: string; mediaType: string; kind: ChatImageKind }> = [];
+  const errors: string[] = [];
+  for (const { file_path, kind } of images ?? []) {
+    try {
+      if (!existsSync(file_path)) {
+        errors.push(`File not found: ${file_path}`);
+        continue;
+      }
+      const buffer = readFileSync(file_path);
+      const ext = file_path.toLowerCase().split('.').pop();
+      const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+        : ext === 'webp' ? 'image/webp'
+        : 'image/png';
+      payload.push({ dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`, mediaType: mimeType, kind });
+    } catch (err) {
+      errors.push(`Failed to read ${file_path}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { payload, errors };
+}
+
+/** Shared images param for generate-screenshots and edit-screenshots. */
+const chatImagesSchema = z.array(z.object({
+  file_path: z.string().describe('Absolute path to an image file on the local filesystem (PNG, JPG, or WEBP)'),
+  kind: z.enum(['screenshot', 'mascot', 'reference']).default('screenshot')
+    .describe("'screenshot' = real app UI, automatically placed inside the generated device frames (in attachment order). 'mascot' = the app's character/mascot, placed decoratively around the phones (peeking from behind the hook card's phone, beside or in a corner on the closing card); use a transparent PNG. 'reference' = a look to match rather than content: a competitor's App Store listing, a design you want the style of, any image that already shows a phone with a headline above it. A reference is read for taste and is NEVER placed inside a frame, which is the point: wrapping a finished marketing card in a device frame puts a phone inside a phone."),
+})).max(5).optional()
+  .describe('Images to attach to this generation. App screenshots land inside the device frames automatically; a mascot gets placed around the phones; a reference only informs the design. All survive later edits and regenerations.');
+
 // ─── MCP Server ─────────────────────────────────────────────────────────────────
+
+// Read from package.json rather than a literal. This is the version a client
+// sees in the MCP handshake, and a hand-synced literal silently sat at 0.6.1
+// through the 0.6.2 release, then at 0.6.3 through 0.7.0 and 0.8.0. A comment
+// asking the next person to remember has now failed twice, so stop asking.
+const PKG_VERSION: string = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'),
+).version;
 
 const server = new McpServer({
   name: 'appscreenshotstudio',
-  version: '0.4.4',
+  version: PKG_VERSION,
 });
 
 // Tool 1: generate-screenshots
@@ -203,13 +259,19 @@ server.registerTool(
   'generate-screenshots',
   {
     title: 'Generate App Store Screenshots',
-    description: `Create a complete set of App Store screenshot designs for an app. Returns a project URL where the developer can upload actual app screenshots into the device frames and export final PNGs.
+    annotations: {
+      // Creates a new project; never overwrites an existing one.
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+    description: `Create a complete set of App Store screenshot designs for an app. Attach real app screenshots via the images param and they are placed inside the device frames automatically; attach a mascot/character image (kind: "mascot", transparent PNG) and it gets placed around the phones. Returns a project URL where the developer can preview, refine, and export final PNGs.
 
 IMPORTANT: Before calling this tool, research the user's codebase to populate the codebase_context parameter. Search for: package.json/README (app name & description), theme/color config files (brand colors), route definitions (key screens), marketing copy (value proposition), and App Store metadata. The more context you provide, the better the screenshots will be. Call prepare-screenshot-brief first if you need a research checklist.
 
 The AI picks a narrative arc that fits the app's sell angle (trust-first for finance/health, visual-first for creative/lifestyle, problem-first for pain-relief apps, numbers-led for SaaS/analytics, community-first for social, feature-forward for multi-mode apps) and assigns a job to each card: HOOK → EDUCATE → PROVE → CONVERT.
 
-13 layout types available per card:
+10 layout types available per card:
 - text-top-device-bottom: headline top, flat device bottom (feature/educate)
 - text-top-device-tilted: headline left, tilted device right (or mirrored)
 - device-hero: headline + large centered device, product-forward
@@ -217,14 +279,11 @@ The AI picks a narrative arc that fits the app's sell angle (trust-first for fin
 - review-clip: rating-statement headline + stars + quote + bottom-clipped device
 - screen-hero: top-clipped device + centered headline + optional trust stat
 - lifestyle-hero: full-bleed photo background + text overlay (no device)
-- feature-grid: headline + 2×2 or 2×3 icon+label grid, no device
-- before-after: dark before-half + bright after-half (transformation apps)
 - stats-hero: giant centered stat(s), no device, numbers-led
 - metric-badge: centered device + chunky "achievement card" floating over its screen
 - annotated-feature: tilted device + side callout chip linked by a connector line
-- step-flow: headline + 2-4 numbered step rows ("how it works"), no device
 
-Each card can carry auto-positioned compound fields: statRow, laurelStat, pressBanner, starRating, quote, featureGrid, beforeAfterSplit, stepList.
+Each card can carry auto-positioned compound fields: statRow, laurelStat, pressBanner, starRating, quote, credential ("FDIC insured"-style trust pills), guarantee ("Cancel anytime"-style risk-reversal pills). Trust signals are opt-in: supply the real number, quote or press name, or the card ships clean rather than inventing one.
 
 Panoramic backgrounds slice one wide AI-generated or Pexels image across multiple cards for cohesion. Panoramic element spans stretch a foreground image or device across adjacent cards. Note: if the design comes back with a panoramic background, the chat only tags the cards; call generate-panoramic-background afterwards to actually create and slice the wide image.
 
@@ -239,7 +298,7 @@ App Store 60/40 rule enforced: minimum 60% of cards must show a device mockup, m
 Costs 5 credits per generation.`,
     inputSchema: z.object({
       app_name: z.string().describe('Name of the app'),
-      app_description: z.string().describe('What the app does — 1-3 sentences'),
+      app_description: z.string().describe('What the app does, in 1-3 sentences'),
       features: z.array(z.string()).max(10).optional()
         .describe('Key features in order of importance. The first 2-3 will be highlighted most prominently.'),
       brand_colors: z.object({
@@ -248,7 +307,7 @@ Costs 5 credits per generation.`,
         accent: z.string().optional().describe('Accent color as hex'),
       }).optional().describe('Brand colors to use in the design'),
       mood: z.string().optional()
-        .describe('Design mood — e.g. "energetic", "calm", "minimal", "bold", "professional", "playful"'),
+        .describe('Design mood, e.g. "energetic", "calm", "minimal", "bold", "professional", "playful"'),
       device_id: z.string().default('iphone-6.9')
         .describe(`Target device. Options: ${VALID_DEVICE_IDS.join(', ')}. Default: iphone-6.9 (iPhone 16 Pro Max)`),
       count: z.number().min(3).max(10).default(5)
@@ -257,27 +316,28 @@ Costs 5 credits per generation.`,
         .describe('Narrative structure for the screenshots. "auto" lets the AI choose the best flow.'),
       codebase_context: z.object({
         readme_summary: z.string().optional()
-          .describe('Summary of the app from README or docs — what does it do and why?'),
+          .describe('Summary of the app from README or docs: what does it do and why?'),
         key_screens: z.array(z.string()).max(15).optional()
-          .describe('Main screens/views in the app — e.g. "Dashboard with activity feed", "Settings with theme toggle"'),
+          .describe('Main screens/views in the app, e.g. "Dashboard with activity feed", "Settings with theme toggle"'),
         color_tokens: z.record(z.string()).optional()
-          .describe('Brand/theme colors found in code — e.g. {"primary": "#7C3AED", "background": "#0F172A"}'),
+          .describe('Brand/theme colors found in code, e.g. {"primary": "#7C3AED", "background": "#0F172A"}'),
         target_audience: z.string().optional()
-          .describe('Who the app is for — e.g. "busy professionals who want to track habits"'),
+          .describe('Who the app is for, e.g. "busy professionals who want to track habits"'),
         app_category: z.string().optional()
-          .describe('App category — e.g. fitness, finance, social, productivity, food, travel, health, education'),
+          .describe('App category, e.g. fitness, finance, social, productivity, food, travel, health, education'),
         competitive_edge: z.string().optional()
           .describe('What makes this app unique vs competitors'),
         app_store_description: z.string().optional()
           .describe('Existing App Store/Play Store description if found in the codebase'),
         tech_stack: z.string().optional()
-          .describe('Tech stack — e.g. "React Native", "SwiftUI", "Flutter". Useful for developer-tool apps.'),
+          .describe('Tech stack, e.g. "React Native", "SwiftUI", "Flutter". Useful for developer-tool apps.'),
         ui_style: z.string().optional()
-          .describe('UI style observations — e.g. "dark mode with neon accents", "clean minimal with lots of whitespace"'),
+          .describe('UI style observations, e.g. "dark mode with neon accents", "clean minimal with lots of whitespace"'),
         primary_user_flow: z.string().optional()
-          .describe('The main user journey — e.g. "Sign up → Create project → Invite team → Track progress"'),
+          .describe('The main user journey, e.g. "Sign up → Create project → Invite team → Track progress"'),
       }).optional()
-        .describe('Context gathered from researching the app codebase. Dramatically improves screenshot quality — the more detail here, the better the output.'),
+        .describe('Context gathered from researching the app codebase. Dramatically improves screenshot quality. The more detail here, the better the output.'),
+      images: chatImagesSchema,
     }),
   },
   async (input) => {
@@ -308,11 +368,15 @@ Costs 5 credits per generation.`,
     const project = createRes.data.data as { id: string };
     const projectId = project.id;
 
-    // Step 2: Chat to generate all cards
-    const message = buildDesignMessage(input);
+    // Step 2: Chat to generate all cards (with attached images when provided:
+    // screenshots auto-fill the device frames, mascots decorate around them)
+    const { payload: chatImages, errors: imageErrors } = readImagesForChat(input.images);
+    const hasScreens = chatImages.some((img) => img.kind === 'screenshot');
+    const message = buildDesignMessage(input, hasScreens);
     const chatRes = await apiCall('POST', `/api/v1/projects/${projectId}/chat`, {
       message,
       selected_card_indices: [],
+      ...(chatImages.length > 0 ? { images: chatImages } : {}),
     });
 
     if (!chatRes.ok) {
@@ -344,10 +408,13 @@ Costs 5 credits per generation.`,
           `Credits remaining: ${creditsRemaining}`,
           '',
           'Next steps:',
-          '1. Use upload-screenshots to add your app screenshots into the device frames',
+          hasScreens
+            ? '1. Your attached screenshots were placed into the device frames (upload-screenshots can swap any card later)'
+            : '1. Use upload-screenshots to add your app screenshots into the device frames',
           '2. Use render-screenshots to export final PNGs',
           '3. Or open the project URL in a browser to preview and adjust',
           '',
+          imageErrors.length ? `Image read warnings:\n${imageErrors.join('\n')}` : '',
           chatData.suggestions?.length
             ? `Suggestions: ${chatData.suggestions.join(', ')}`
             : '',
@@ -362,30 +429,37 @@ server.registerTool(
   'edit-screenshots',
   {
     title: 'Edit Screenshot Designs',
-    description: `Make changes to an existing screenshot project. Use natural language to describe what you want to change. Costs 5 credits per edit.
+    annotations: {
+      // Rewrites cards in place, so a bad edit costs the previous design.
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    },
+    description: `Make changes to an existing screenshot project. Use natural language to describe what you want to change. Costs 5 credits per edit. You can also attach images: app screenshots fill the device frames of regenerated cards, a mascot (kind: "mascot") gets placed around the phones.
 
 What you can change:
 - Text: headlines, subtitles, badge text, font size, font family (Inter, Poppins, Montserrat, DM Sans, Space Grotesk, etc.)
 - Text styling: per-word color, bold, italic, underline, highlight pills (colored background behind words), gradient text, text stroke outlines
-- Colors: brand palette, gradient backgrounds, accent colors, text colors
-- Layouts (13 types): text-top-device-bottom, text-top-device-tilted, device-hero, social-proof, review-clip, screen-hero, lifestyle-hero, feature-grid, before-after, stats-hero, metric-badge, annotated-feature, step-flow. The AI picks a narrative arc (HOOK → EDUCATE → PROVE → CONVERT) across the set.
+- Colors: brand palette, gradient backgrounds, accent colors, text colors. A set can rotate MULTIPLE accents card by card ("pink, then coral, then brick") and each card keeps its own highlight colour.
+- Background textures (ask for one explicitly, they are never added on their own): diagonal-stripe, crosshatch, checkerboard, zigzag, hairline-grid, dot-grid, waves, grain, radial-rays, concentric-circles. Kept subtle by design so they cannot affect headline contrast. Tiled textures run continuously across the whole set; radial-rays and concentric-circles can be centred on the middle of the set so the pattern fans out across every card.
+- Layouts (10 types): text-top-device-bottom, text-top-device-tilted, device-hero, social-proof, review-clip, screen-hero, lifestyle-hero, stats-hero, metric-badge, annotated-feature. The AI picks a narrative arc (HOOK → EDUCATE → PROVE → CONVERT) across the set.
 - Layout params: deviceScale (small/medium/large), deviceSide (left/right), textPosition (above/below), textAlign (left/center)
 - Device mockups: perspective variants (flat, left-15, right-15, left-30, right-30, isometric, top-down, landscape-left, landscape-right), 2D rotation, resize, reposition
-- Frame color: recolor the device frame — "natural" (default), "black", "white", "gold". Examples: "make the iPhone gold", "black titanium finish", "white iPhone". Requires Growth plan or higher.
+- Frame color: recolor the device frame: "natural" (default), "black", "white", "gold". Examples: "make the iPhone gold", "black titanium finish", "white iPhone". Requires Growth plan or higher.
 - Switch devices: "make this for Apple Watch" / "duplicate for Android tablet" clones the project at the target device's canvas size
 - Add/remove cards: add a social proof card, remove card 3, add a marketing title card
-- Compound fields (auto-positioned): statRow, laurelStat, pressBanner, starRating, quote, featureGrid, beforeAfterSplit
+- Compound fields (auto-positioned): statRow, laurelStat, pressBanner, starRating, quote, credential, guarantee
 - Panoramic backgrounds: one wide AI or Pexels image sliced across multiple cards ("pano the background across cards 1-3"). The edit only tags the cards; call generate-panoramic-background afterwards to create and slice the wide image.
 - Panoramic element spans: stretch a foreground image, device-mockup, or shape across adjacent cards ("pano the device across cards 1-2")
 - Floating elements: add/edit badges, star ratings
 - Shapes: glow orbs, waves, blobs, rounded rectangles, circles, custom SVG paths
-- Decorative shapes: 77 library shapes — leaf, flower, cloud, sparkle, heart, rocket, trophy, crown, coffee-cup, airplane, dollar-sign, paw-print, wing-left/wing-right (for laurels), and many more
+- Decorative shapes: 77 library shapes: leaf, flower, cloud, sparkle, heart, rocket, trophy, crown, coffee-cup, airplane, dollar-sign, paw-print, wing-left/wing-right (for laurels), and many more
 - Backgrounds: solid, subtle-gradient, rich-gradient, photo (Pexels), or ai-generated; change gradient colors/angle; set a backgroundPrompt for AI-generated
 - Style: shadows, opacity, border radius, rotation, blur
 
 What isn't supported (the AI will flag these in unsupportedAsks):
-- Multiple devices side-by-side in a single card (e.g. iPhone + Watch in one scene) — each card renders one device. Use the duplicate-for-device workflow instead, or split across cards.
-- Uploading a specific user-supplied screenshot into a mockup — use upload-screenshots tool first, then reference the uploaded project.
+- Multiple devices side-by-side in a single card (e.g. iPhone + Watch in one scene). Each card renders one device. Use the duplicate-for-device workflow instead, or split across cards.
+- Uploading a specific user-supplied screenshot into a mockup: use upload-screenshots tool first, then reference the uploaded project.
 
 Example edit messages:
 - "Make the headlines larger and use Bebas Neue font"
@@ -398,12 +472,11 @@ Example edit messages:
 - "Recolor the iPhone frame to gold across all cards"
 - "Replace card 3 with a CTA card saying Download Free"
 - "Switch card 2 to device-hero layout with statRow showing our three key metrics"
-- "Add a before-after card showing the transformation"
 - "Add decorative leaf and sparkle shapes scattered in the background"
 - "Make 'Every' underlined and italic in the headline"`,
     inputSchema: z.object({
       project_id: z.string().describe('Project ID from a previous generate-screenshots call'),
-      message: z.string().describe('What to change — use natural language'),
+      message: z.string().describe('What to change, in natural language'),
       card_indices: z.array(z.number().int().min(0)).max(10).optional()
         .describe('Target specific cards by index (0-based). e.g. [0] for card 1, [2,3] for cards 3-4. Max 10 indices. Omit to apply changes to all cards.'),
       codebase_context: z.object({
@@ -419,9 +492,10 @@ Example edit messages:
         primary_user_flow: z.string().optional(),
       }).optional()
         .describe('App context from codebase research. Helps the AI make edits that match the actual app.'),
+      images: chatImagesSchema,
     }),
   },
-  async ({ project_id, message, card_indices, codebase_context }) => {
+  async ({ project_id, message, card_indices, codebase_context, images }) => {
     let enrichedMessage = message;
     if (codebase_context) {
       const ctxParts: string[] = [];
@@ -436,14 +510,16 @@ Example edit messages:
       }
     }
 
+    const { payload: chatImages, errors: imageErrors } = readImagesForChat(images);
     const res = await apiCall('POST', `/api/v1/projects/${project_id}/chat`, {
       message: enrichedMessage,
       selected_card_indices: card_indices || [],
+      ...(chatImages.length > 0 ? { images: chatImages } : {}),
     });
 
     if (!res.ok) {
       return {
-        content: [{ type: 'text' as const, text: `Edit failed: ${JSON.stringify(res.data)}` }],
+        content: [{ type: 'text' as const, text: `Edit failed: ${JSON.stringify(res.data)}${imageErrors.length ? `\n\nImage read warnings:\n${imageErrors.join('\n')}` : ''}` }],
       };
     }
 
@@ -451,8 +527,12 @@ Example edit messages:
       message: string;
       canvas_state: { cards: unknown[] };
       suggestions: string[];
+      duplicated_project_id?: string;
     };
     const creditsRemaining = res.data.credits_remaining;
+    // A device switch ("make this for iPad") clones the project. All further
+    // edits, uploads, and renders must target the NEW project id, not the old one.
+    const activeProjectId = data.duplicated_project_id || project_id;
 
     return {
       content: [{
@@ -460,9 +540,12 @@ Example edit messages:
         text: [
           data.message,
           '',
+          data.duplicated_project_id
+            ? `NEW PROJECT CREATED at the target device size: ${data.duplicated_project_id}\nUse this project_id for all further edits, screenshot uploads, and rendering. The original project (${project_id}) is unchanged.`
+            : '',
           `Cards: ${data.canvas_state?.cards?.length || 0}`,
           `Credits remaining: ${creditsRemaining}`,
-          `Project URL: ${API_BASE}/builder/${project_id}`,
+          `Project URL: ${API_BASE}/builder/${activeProjectId}`,
           '',
           data.suggestions?.length
             ? `Suggestions: ${data.suggestions.join(', ')}`
@@ -478,7 +561,14 @@ server.registerTool(
   'render-screenshots',
   {
     title: 'Render Screenshots to PNG',
-    description: 'Export a screenshot project to high-resolution PNG files at exact App Store dimensions. Returns download URLs for each card. Free (no credit cost). Rendering blocks until the PNGs are ready: expect roughly 20-40s for iPhone sets and 60-120s for iPad (the larger canvas renders slower), so allow up to ~2 minutes before treating it as failed. Note: device mockups will show empty frames unless app screenshots have been uploaded via upload-screenshots first.',
+    annotations: {
+      // Re-rendering the same project state yields the same PNGs.
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    description: 'Export a screenshot project to high-resolution PNG files at exact App Store dimensions. Returns download URLs for each card; URLs stay valid for 7 days, so save the PNGs to disk promptly (re-rendering is free if a URL has expired). Free (no credit cost). Rendering blocks until the PNGs are ready: expect roughly 20-40s for iPhone sets and 60-120s for iPad (the larger canvas renders slower), so allow up to ~2 minutes before treating it as failed. Note: device mockups will show empty frames unless app screenshots have been uploaded via upload-screenshots first.',
     inputSchema: z.object({
       project_id: z.string().describe('Project ID to render'),
     }),
@@ -509,6 +599,9 @@ server.registerTool(
           '',
           ...images.map((img, i) => `Card ${i + 1}: ${img.url} (${img.width}×${img.height})`),
           '',
+          'Download URLs are valid for 7 days. Save the PNGs to disk now if you',
+          'need them long-term (re-rendering later is free).',
+          '',
           'Previews are shown below. To compare all cards side by side at full size,',
           'refine by hand, or export, open the project URL in the builder.',
         ].join('\n'),
@@ -535,12 +628,17 @@ server.registerTool(
   'list-devices',
   {
     title: 'List Supported Devices',
+    annotations: {
+      // Reads a local constant; makes no API call at all.
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
     description: 'Show all supported device specs for App Store and Play Store screenshots. Use the device ID when generating screenshots.',
     inputSchema: z.object({}),
   },
   async () => {
     const lines = DEVICES.map(d =>
-      `${d.id} — ${d.name} (${d.width}×${d.height}, ${d.category}${d.required ? ', required for store submission' : ''})`
+      `${d.id}: ${d.name} (${d.width}×${d.height}, ${d.category}${d.required ? ', required for store submission' : ''})`
     );
 
     return {
@@ -564,14 +662,18 @@ server.registerTool(
   'get-project',
   {
     title: 'Get Project Details',
-    description: `Retrieve the full state of a screenshot project, including all cards and their elements. Use this to inspect what was generated before making edits. Free — no credit cost.
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+    description: `Retrieve the full state of a screenshot project, including all cards and their elements. Use this to inspect what was generated before making edits. Free: no credit cost.
 
 Returns the canvas state with:
 - cards[]: each card has an id, elements array, and optional background settings
 - Each element has: type (text, device-mockup, shape, badge, image, star-rating), position (x, y), size (width, height), zIndex, and type-specific properties
 - Text elements: fontFamily, fontSize, fontWeight, color, segments (for multi-color text with per-word color, bold, italic, underline, highlightColor)
-- Device mockups: perspectiveVariant (flat, left-15, right-15, left-30, right-30, isometric, top-down, landscape-left, landscape-right), screenshotImage (null if no upload)
-- Shapes: 94 shape types (17 core + 77 decorative across 13 categories) — core shapes (circle, rectangle, rounded-rect, blob, wave, triangle, diamond, hexagon, ring, star, wing-left, wing-right, etc.) plus decorative library shapes (leaf, flower, cloud, sparkle, heart, rocket, trophy, crown, coffee-cup, airplane, dollar-sign, paw-print, and many more)
+- Device mockups: perspectiveVariant (flat, left-15, right-15, left-30, right-30, isometric, top-down, landscape-left, landscape-right), screenshotImage (null if no upload), frameStyle (realistic | none), showIsland (false hides the Dynamic Island pill; Apple accepts screenshots either way)
+- Shapes: 94 shape types (17 core + 77 decorative across 13 categories): core shapes (circle, rectangle, rounded-rect, blob, wave, triangle, diamond, hexagon, ring, star, wing-left, wing-right, etc.) plus decorative library shapes (leaf, flower, cloud, sparkle, heart, rocket, trophy, crown, coffee-cup, airplane, dollar-sign, paw-print, and many more)
 - projectMeta: globalVisualTheme, brandColors, mood, appCategory`,
     inputSchema: z.object({
       project_id: z.string().describe('Project ID to inspect'),
@@ -607,7 +709,7 @@ Returns the canvas state with:
         typeCounts[t] = (typeCounts[t] || 0) + 1;
       }
       const typeStr = Object.entries(typeCounts).map(([t, c]) => `${c} ${t}`).join(', ');
-      return `  Card ${i} (${card.id}): ${card.elements.length} elements — ${typeStr}`;
+      return `  Card ${i} (${card.id}): ${card.elements.length} elements: ${typeStr}`;
     }) || [];
 
     return {
@@ -636,9 +738,15 @@ server.registerTool(
   'generate-background',
   {
     title: 'Generate AI Background',
+    annotations: {
+      // Replaces the card's existing background.
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    },
     description: `Generate an AI background image for a specific card using Gemini. The background is generated based on a text prompt and applied directly to the card. Costs 6 credits.
 
-Good prompts describe mood, lighting, and color — not objects or text:
+Good prompts describe mood, lighting, and color, not objects or text:
 - "Deep purple nebula with soft pink and blue light rays"
 - "Warm sunset gradient with golden bokeh particles"
 - "Dark moody atmosphere with teal and emerald glow"
@@ -648,7 +756,7 @@ The generated image is cropped to exact device dimensions and set as the card's 
     inputSchema: z.object({
       project_id: z.string().describe('Project ID'),
       card_index: z.number().describe('Card index (0-based) to apply the background to'),
-      prompt: z.string().describe('Background description — describe mood, lighting, colors, textures. Do NOT include text, devices, or UI elements.'),
+      prompt: z.string().describe('Background description: describe mood, lighting, colors, textures. Do NOT include text, devices, or UI elements.'),
     }),
   },
   async ({ project_id, card_index, prompt }) => {
@@ -683,6 +791,12 @@ server.registerTool(
   'generate-panoramic-background',
   {
     title: 'Generate Panoramic Background',
+    annotations: {
+      // Replaces the background on every card in the span.
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    },
     description: `Generate one wide background image and slice it across multiple cards so they read as a continuous scene when the App Store gallery scrolls. The store gallery gap is accounted for, so slices line up after Apple's gutter.
 
 Two image sources:
@@ -739,25 +853,31 @@ server.registerTool(
   'prepare-screenshot-brief',
   {
     title: 'Prepare Screenshot Brief',
-    description: `Get a research checklist and strategy guide to prepare for screenshot generation. Call this BEFORE generate-screenshots to know what to look for in the codebase. Free — no API call or credits needed.
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+    description: `Get a category playbook and repo-research checklist to prepare for screenshot generation. Call this BEFORE generate-screenshots. Free (no credits).
+
+Pass app_category to get category-specific guidance pulled live from AppScreenshotStudio: the frame-1 hook playbook (default layout, what to avoid, caption patterns), the recommended story_flow and mood, and the exact facts to dig out of THIS app's repo for its category (e.g. security and compliance signals for finance, real gameplay art for games, the outcome for fitness).
 
 Returns:
-- A codebase research checklist (file patterns to search for each tech stack)
-- Story flow recommendations by app category
-- Tips for writing compelling screenshot headlines
-- The codebase_context schema to fill in
+- A category playbook (frame-1 hooks + layout + arc + mood) for the app_category
+- A category-specific repo research focus (what to grep this app for)
+- A generic codebase research checklist (file patterns per tech stack)
+- Headline tips + the codebase_context schema to fill in
 
-This tool helps you gather the right information so generate-screenshots produces the best possible output on the first try.`,
+The more you gather here, the better generate-screenshots does on the first try.`,
     inputSchema: z.object({
       app_category: z.string().optional()
-        .describe('App category if known — e.g. fitness, finance, social, productivity, developer-tools'),
+        .describe('App category, e.g. fitness, finance, gaming, social, productivity, health, travel, wellness. Drives the category playbook this tool returns; synonyms are normalized server-side.'),
       platform: z.enum(['ios', 'android', 'both']).default('ios')
         .describe('Target platform'),
     }),
   },
   async ({ app_category, platform }) => {
     const checklist = [
-      '# Screenshot Brief — Research Checklist',
+      '# Screenshot Brief: Research Checklist',
       '',
       'Search the codebase for each of these before calling generate-screenshots.',
       'The more you find, the better the screenshots will be.',
@@ -828,85 +948,67 @@ This tool helps you gather the right information so generate-screenshots produce
       '- Key interactions → what makes the app satisfying to use',
     ];
 
-    // Story flow recommendations
-    const storyFlows = [
-      '',
-      '---',
-      '',
-      '# Story Flow Recommendations',
-      '',
-    ];
-
-    const categoryRecommendations: Record<string, string[]> = {
-      'fitness': [
-        '**Fitness apps → `journey` or `benefit-first`**',
-        '- Lead with transformation: "Before → After" or "Track → Improve → Achieve"',
-        '- Highlight: workout tracking, progress charts, streaks, community challenges',
-        '- Mood: energetic or bold',
-      ],
-      'finance': [
-        '**Finance apps → `benefit-first` or `problem-solution`**',
-        '- Lead with outcomes: "Save $X/month" or "See all accounts in one place"',
-        '- Highlight: dashboards, charts, budgets, alerts, security',
-        '- Mood: professional or calm',
-      ],
-      'social': [
-        '**Social apps → `social-proof-bookend` or `hero-intro`**',
-        '- Lead with community: "Join 1M+ users" or show vibrant UI',
-        '- Highlight: feed, messaging, profiles, discovery, sharing',
-        '- Mood: playful or energetic',
-      ],
-      'productivity': [
-        '**Productivity apps → `problem-solution` or `standard`**',
-        '- Lead with pain point: "Stop juggling 5 apps" → "One place for everything"',
-        '- Highlight: task management, collaboration, integrations, speed',
-        '- Mood: minimal or professional',
-      ],
-      'food': [
-        '**Food/recipe apps → `hero-intro` or `journey`**',
-        '- Lead with beautiful imagery or the discovery experience',
-        '- Highlight: recipe browsing, meal planning, grocery lists, cooking mode',
-        '- Mood: warm or playful',
-      ],
-      'travel': [
-        '**Travel apps → `journey` or `hero-intro`**',
-        '- Lead with destination discovery or trip planning flow',
-        '- Highlight: search, booking, itinerary, maps, offline access',
-        '- Mood: energetic or calm',
-      ],
-      'health': [
-        '**Health/wellness apps → `benefit-first` or `journey`**',
-        '- Lead with outcomes: "Sleep better", "Feel calmer", "Know your body"',
-        '- Highlight: tracking, insights, reminders, progress, professional guidance',
-        '- Mood: calm or professional',
-      ],
-      'education': [
-        '**Education apps → `journey` or `hero-intro`**',
-        '- Lead with learning progression or "learn anything" hero',
-        '- Highlight: courses, progress tracking, quizzes, certificates, offline',
-        '- Mood: playful or professional',
-      ],
-      'developer-tools': [
-        '**Developer tools → `problem-solution` or `benefit-first`**',
-        '- Lead with workflow pain: "Stop copy-pasting" → "One command and done"',
-        '- Highlight: CLI, integrations, speed, DX, code examples',
-        '- Mood: minimal or bold',
-      ],
-      'shopping': [
-        '**Shopping/e-commerce → `social-proof-bookend` or `benefit-first`**',
-        '- Lead with deals or trust: "Trusted by 500K+ shoppers"',
-        '- Highlight: discovery, search, wishlists, checkout, tracking',
-        '- Mood: bold or energetic',
-      ],
+    // Category playbook: pulled live from the app so improvements reach the
+    // agent without an npm republish. Falls back silently to the generic
+    // checklist below if the endpoint is unreachable.
+    type Playbook = {
+      matched: string;
+      depth: string;
+      label: string;
+      arc: string;
+      mood: string;
+      researchFocus: string[];
+      frame1?: {
+        defaultLayout: string;
+        avoidLayouts: string[];
+        rationale: string;
+        hooks: Array<{ name: string; shows: string; fits: string; layout: string; captionPattern: string }>;
+      };
+      patternsToAvoid?: string[];
+      highlights?: string[];
     };
 
-    if (app_category && categoryRecommendations[app_category]) {
-      storyFlows.push(...categoryRecommendations[app_category]);
-    } else {
-      storyFlows.push('**General recommendations by app type:**', '');
-      for (const [, lines] of Object.entries(categoryRecommendations)) {
-        storyFlows.push(...lines, '');
+    let playbook: Playbook | null = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/playbook?category=${encodeURIComponent(app_category ?? '')}`);
+      if (res.ok) {
+        const json = (await res.json()) as { data?: Playbook };
+        if (json?.data) playbook = json.data;
       }
+    } catch {
+      // offline or endpoint unavailable: the generic checklist still stands
+    }
+
+    const categoryBlock: string[] = [];
+    if (playbook && playbook.depth !== 'general') {
+      categoryBlock.push(
+        `# Category Playbook: ${playbook.label}`,
+        '',
+        `Recommended \`story_flow\`: \`${playbook.arc}\`  |  \`mood\`: \`${playbook.mood}\``,
+        '',
+        '## Research this app for its category',
+        `These are what a ${playbook.label.toLowerCase()} frame 1 lives or dies on. Dig them out of the repo before generating:`,
+        ...playbook.researchFocus.map((r) => `- ${r}`),
+        '',
+      );
+      if (playbook.frame1) {
+        categoryBlock.push(
+          '## Frame 1 (the hook) for this category',
+          `Default layout: \`${playbook.frame1.defaultLayout}\`. Avoid: ${playbook.frame1.avoidLayouts.map((l) => `\`${l}\``).join(', ')}.`,
+          `Why: ${playbook.frame1.rationale}`,
+          '',
+          'Pick the hook that fits the app, then write the headline from its caption pattern:',
+          ...playbook.frame1.hooks.map((h) => `- **${h.name}** (${h.layout}): ${h.shows}. Caption: ${h.captionPattern}`),
+          '',
+        );
+      }
+      if (playbook.patternsToAvoid && playbook.patternsToAvoid.length) {
+        categoryBlock.push('## Avoid for this category', ...playbook.patternsToAvoid.map((p) => `- ${p}`), '');
+      }
+      if (playbook.highlights && playbook.highlights.length) {
+        categoryBlock.push(`Highlights worth surfacing: ${playbook.highlights.join(', ')}.`, '');
+      }
+      categoryBlock.push('---', '');
     }
 
     // Headline tips
@@ -919,7 +1021,7 @@ This tool helps you gather the right information so generate-screenshots produce
       '- Lead with USER BENEFIT, not feature name: "Never forget a task" > "Task Management"',
       '- Use power words: Track, Save, Build, Discover, Master, Simplify, Automate',
       '- Include numbers when possible: "3x faster", "10K+ recipes", "Save 2hrs/week"',
-      '- First 3 screenshots matter most — App Store shows them in search results',
+      '- First 3 screenshots matter most: App Store shows them in search results',
       '- Hero card headline = your one-sentence pitch. Make it count.',
       '- Keep headlines under 6 words. Subtitle can add detail.',
     ];
@@ -934,14 +1036,15 @@ This tool helps you gather the right information so generate-screenshots produce
     ];
     if (platform === 'ios' || platform === 'both') {
       deviceTips.push('**iOS (required for App Store):**');
-      deviceTips.push('- iPhone 16 Pro Max (iphone-6.9): 1260×2736 — REQUIRED');
-      deviceTips.push('- iPad Pro 13" (ipad-13): 2064×2752 — REQUIRED');
+      deviceTips.push('- iPhone 16 Pro Max (iphone-6.9): 1260×2736: REQUIRED');
+      deviceTips.push('- iPad Pro 13" (ipad-13): 2064×2752: REQUIRED');
       deviceTips.push('');
     }
     if (platform === 'android' || platform === 'both') {
       deviceTips.push('**Android (required for Play Store):**');
-      deviceTips.push('- Android Phone (android-phone): 1080×2340 — REQUIRED');
-      deviceTips.push('- Android Tablet 7" (android-tablet-10): 1200×1920 — optional');
+      deviceTips.push('- Android Phone (android-phone): 1080×2340: REQUIRED');
+      deviceTips.push('- Android Tablet 7" (android-tablet-10): 1200×1920: REQUIRED');
+      deviceTips.push('- Android Tablet 10" (android-tablet-large): 1600×2560: second large-screen slot');
       deviceTips.push('');
     }
 
@@ -979,7 +1082,7 @@ This tool helps you gather the right information so generate-screenshots produce
     return {
       content: [{
         type: 'text' as const,
-        text: [...checklist, ...storyFlows, ...headlineTips, ...deviceTips, ...schemaReminder].join('\n'),
+        text: [...categoryBlock, ...checklist, ...headlineTips, ...deviceTips, ...schemaReminder].join('\n'),
       }],
     };
   },
@@ -991,11 +1094,17 @@ server.registerTool(
   'upload-screenshots',
   {
     title: 'Upload App Screenshots',
+    annotations: {
+      // Overwrites whatever image the device frames already held.
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: false,
+    },
     description: `Upload local app screenshots (from Simulator, emulator, or screen captures) into the device mockups of an existing project. This lets you add real app UI into the device frames without leaving the terminal.
 
 Reads files from your local filesystem, converts them to base64, and sets them on the device mockup elements in the specified cards.
 
-Free — no credit cost. The screenshots are placed into the device frames that were created by generate-screenshots.
+Free: no credit cost. The screenshots are placed into the device frames that were created by generate-screenshots.
 
 Workflow:
 1. generate-screenshots → creates project with empty device frames
@@ -1112,7 +1221,7 @@ function autoInstallSkill() {
     mkdirSync(destDir, { recursive: true });
     copyFileSync(src, dest);
   } catch {
-    // Silent fail — skill install is optional
+    // Silent fail: skill install is optional
   }
 }
 

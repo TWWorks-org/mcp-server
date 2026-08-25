@@ -1,14 +1,18 @@
 {
   "name": "appscreenshotstudio",
   "owner": {
-    "name": "AppScreenshotStudio"
+    "name": "AppScreenshotStudio",
+    "url": "https://appscreenshotstudio.com"
+  },
+  "metadata": {
+    "description": "App Store and Play Store screenshot tooling for coding agents, from AppScreenshotStudio."
   },
   "plugins": [
     {
       "name": "appscreenshotstudio",
       "source": "./",
       "description": "Generate App Store and Play Store screenshots from your AI agent, then refine them by chatting. Needs an API key (Growth or Pro plan).",
-      "version": "0.5.1"
+      "version": "0.8.1"
     }
   ]
 }

@@ -1,0 +1,41 @@
+{
+  "name": "appscreenshotstudio",
+  "version": "0.8.8",
+  "description": "Generate App Store and Play Store screenshots from your agent, then refine them by chatting: describe, see options, refine, ship. Bundles the AppScreenshotStudio MCP server. Needs an API key (Growth or Pro plan).",
+  "author": {
+    "name": "AppScreenshotStudio",
+    "email": "contact@bookillustrationai.com",
+    "url": "https://appscreenshotstudio.com"
+  },
+  "homepage": "https://appscreenshotstudio.com/docs/mcp",
+  "repository": "https://github.com/TWWorks-org/mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "app-store",
+    "play-store",
+    "app-store-screenshots",
+    "aso",
+    "screenshot-generator"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "AppScreenshotStudio",
+    "shortDescription": "App Store screenshots you refine by chatting",
+    "longDescription": "Describe your app, see screenshot options at exact App Store and Play Store sizes, refine them by chatting, then export. The agent reads your codebase for brand colors and key screens first, so the first set already looks like your app. Requires an AppScreenshotStudio API key on the Growth or Pro plan, set as APPSCREENSHOTSTUDIO_API_KEY.",
+    "developerName": "AppScreenshotStudio",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://appscreenshotstudio.com",
+    "privacyPolicyURL": "https://appscreenshotstudio.com/privacy",
+    "termsOfServiceURL": "https://appscreenshotstudio.com/terms",
+    "defaultPrompt": [
+      "Generate App Store screenshots for this app.",
+      "Shorten the headline on screenshot 2 and darken its background.",
+      "Export the set for iPhone 16 Pro Max and iPad Pro 13-inch."
+    ],
+    "brandColor": "#059669",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
+  }
+}

@@ -40,6 +40,10 @@ const API_KEY = process.env.APPSCREENSHOTSTUDIO_API_KEY;
 //    public/api-docs.md (served raw at /api-docs.md, linked from nowhere, so it drifts unseen too)
 //    Enforced by `npm run test:device-specs`, which reads all six files.
 
+// Hand-copied from lib/device-specs.ts because this package ships standalone.
+// `required` means required to PUBLISH, and it is emitted to agents as
+// "required for store submission", so a wrong flag here is a wrong instruction
+// rather than a cosmetic slip. Keep it in step with the source file.
 const DEVICES = [
   { id: 'iphone-6.9', name: 'iPhone 16 Pro Max', width: 1260, height: 2736, category: 'iphone', required: true },
   { id: 'iphone-6.3', name: 'iPhone 17 Pro', width: 1206, height: 2622, category: 'iphone', required: false },
@@ -47,7 +51,9 @@ const DEVICES = [
   { id: 'android-phone', name: 'Android Phone', width: 1080, height: 2340, category: 'android-phone', required: true },
   { id: 'pixel-11-pro', name: 'Google Pixel 11 Pro', width: 1280, height: 2856, category: 'android-phone', required: false },
   { id: 'galaxy-s26-ultra', name: 'Samsung Galaxy S26 Ultra', width: 1440, height: 3120, category: 'android-phone', required: false },
-  { id: 'android-tablet-10', name: 'Android Tablet 7"', width: 1200, height: 1920, category: 'android-tablet', required: true },
+  // Play Console requires 2 screenshots to publish; tablets are "can add", not
+  // "must provide". Was `true` until 2026-09-07. See lib/device-specs.ts.
+  { id: 'android-tablet-10', name: 'Android Tablet 7"', width: 1200, height: 1920, category: 'android-tablet', required: false },
   { id: 'android-tablet-large', name: 'Android Tablet 10"', width: 1600, height: 2560, category: 'android-tablet', required: false },
   { id: 'apple-watch-ultra', name: 'Apple Watch Ultra 2', width: 410, height: 502, category: 'apple-watch', required: true },
 ] as const;
@@ -206,7 +212,23 @@ function buildDesignMessage(input: GenerateInput, hasScreenshotImages = false): 
  *  placement (screenshots fill the generated device frames, mascots get
  *  placed decoratively around the phones, references are read for taste and
  *  never placed). */
-type ChatImageKind = 'screenshot' | 'mascot' | 'reference';
+type ChatImageKind = 'screenshot' | 'mascot' | 'reference' | 'background';
+
+/**
+ * Characters of image data one chat call may carry. The server sits behind a
+ * 4.5MB request-body limit that rejects the call before it runs, so an agent
+ * sees a bare failure. This package does not resize (no image library), and a
+ * background photo straight off a camera is several MB, so say so up front.
+ */
+const CHAT_IMAGE_BUDGET_CHARS = 4_000_000;
+
+/** A message telling the agent how to fit, or null when the images fit. */
+function imagesOverBudget(payload: Array<{ dataUrl: string }>): string | null {
+  const total = payload.reduce((n, img) => n + img.dataUrl.length, 0);
+  if (total <= CHAT_IMAGE_BUDGET_CHARS) return null;
+  return `The attached images are ${(total / 1e6).toFixed(1)}MB encoded, over the ${(CHAT_IMAGE_BUDGET_CHARS / 1e6).toFixed(1)}MB one call can carry, so nothing was sent and no credits were spent. `
+    + 'Shrink them first, e.g. to a 3840px long edge as JPEG quality 85 (macOS: sips -Z 3840 -s format jpeg in.png --out out.jpg; ImageMagick: magick in.png -resize "3840x3840>" -quality 85 out.jpg), or send background photos in a call of their own.';
+}
 function readImagesForChat(
   images?: Array<{ file_path: string; kind: ChatImageKind }>,
 ): { payload: Array<{ dataUrl: string; mediaType: string; kind: ChatImageKind }>; errors: string[] } {
@@ -234,10 +256,10 @@ function readImagesForChat(
 /** Shared images param for generate-screenshots and edit-screenshots. */
 const chatImagesSchema = z.array(z.object({
   file_path: z.string().describe('Absolute path to an image file on the local filesystem (PNG, JPG, or WEBP)'),
-  kind: z.enum(['screenshot', 'mascot', 'reference']).default('screenshot')
-    .describe("'screenshot' = real app UI, automatically placed inside the generated device frames (in attachment order). 'mascot' = the app's character/mascot, placed decoratively around the phones (peeking from behind the hook card's phone, beside or in a corner on the closing card); use a transparent PNG. 'reference' = a look to match rather than content: a competitor's App Store listing, a design you want the style of, any image that already shows a phone with a headline above it. A reference is read for taste and is NEVER placed inside a frame, which is the point: wrapping a finished marketing card in a device frame puts a phone inside a phone."),
+  kind: z.enum(['screenshot', 'mascot', 'reference', 'background']).default('screenshot')
+    .describe("'screenshot' = real app UI, automatically placed inside the generated device frames (in attachment order). 'mascot' = the app's character/mascot, placed decoratively around the phones (peeking from behind the hook card's phone, beside or in a corner on the closing card); use a transparent PNG. 'reference' = a look to match rather than content: a competitor's App Store listing, a design you want the style of, any image that already shows a phone with a headline above it. A reference is read for taste and is NEVER placed inside a frame, which is the point: wrapping a finished marketing card in a device frame puts a phone inside a phone. 'background' = the user's own photo, placed BEHIND the cards: one background photo becomes one panorama across a group of cards (the first three, or the cards the message names, e.g. \"across all of them\"), several become one per card in attachment order. Free, nothing is generated; cards the photo lands on get a dark band and light text so the words stay readable."),
 })).max(5).optional()
-  .describe('Images to attach to this generation. App screenshots land inside the device frames automatically; a mascot gets placed around the phones; a reference only informs the design. All survive later edits and regenerations.');
+  .describe('Images to attach to this generation. App screenshots land inside the device frames automatically; a mascot gets placed around the phones; a reference only informs the design; a background photo goes behind the cards. All survive later edits and regenerations. Together they must stay under about 4MB encoded: this tool does not resize, so shrink camera photos first.');
 
 // ─── MCP Server ─────────────────────────────────────────────────────────────────
 
@@ -265,7 +287,7 @@ server.registerTool(
       destructiveHint: false,
       openWorldHint: false,
     },
-    description: `Create a complete set of App Store screenshot designs for an app. Attach real app screenshots via the images param and they are placed inside the device frames automatically; attach a mascot/character image (kind: "mascot", transparent PNG) and it gets placed around the phones. Returns a project URL where the developer can preview, refine, and export final PNGs.
+    description: `Create a complete set of App Store screenshot designs for an app. Attach real app screenshots via the images param and they are placed inside the device frames automatically; attach a mascot/character image (kind: "mascot", transparent PNG) and it gets placed around the phones; attach the user's own photo (kind: "background") and it goes behind the cards, one photo as a panorama or several as one per card. Returns a project URL where the developer can preview, refine, and export final PNGs.
 
 IMPORTANT: Before calling this tool, research the user's codebase to populate the codebase_context parameter. Search for: package.json/README (app name & description), theme/color config files (brand colors), route definitions (key screens), marketing copy (value proposition), and App Store metadata. The more context you provide, the better the screenshots will be. Call prepare-screenshot-brief first if you need a research checklist.
 
@@ -348,6 +370,14 @@ Costs 5 credits per generation.`,
       return { content: [{ type: 'text' as const, text: resolved.error }] };
     }
 
+    // Read the images before anything is created, so an oversized attachment
+    // fails here instead of leaving an empty project behind.
+    const { payload: chatImages, errors: imageErrors } = readImagesForChat(input.images);
+    const tooBig = imagesOverBudget(chatImages);
+    if (tooBig) {
+      return { content: [{ type: 'text' as const, text: tooBig }] };
+    }
+
     // Step 1: Create project (with codebase context if provided)
     const projectName = `${input.app_name} Screenshots`;
     const createBody: Record<string, unknown> = {
@@ -370,7 +400,6 @@ Costs 5 credits per generation.`,
 
     // Step 2: Chat to generate all cards (with attached images when provided:
     // screenshots auto-fill the device frames, mascots decorate around them)
-    const { payload: chatImages, errors: imageErrors } = readImagesForChat(input.images);
     const hasScreens = chatImages.some((img) => img.kind === 'screenshot');
     const message = buildDesignMessage(input, hasScreens);
     const chatRes = await apiCall('POST', `/api/v1/projects/${projectId}/chat`, {
@@ -411,8 +440,15 @@ Costs 5 credits per generation.`,
           hasScreens
             ? '1. Your attached screenshots were placed into the device frames (upload-screenshots can swap any card later)'
             : '1. Use upload-screenshots to add your app screenshots into the device frames',
-          '2. Use render-screenshots to export final PNGs',
-          '3. Or open the project URL in a browser to preview and adjust',
+          // edit-screenshots was missing from this list until 2026-09-14, and the
+          // omission has a measurable cost: with no in-band pointer to the refine
+          // path, the cheapest visible way to change a design is to call generate
+          // again, which bills 5 credits and starts a NEW project every time. User
+          // 5b0a496d called generate 4x and edit 0x on one brief, spending 20 of 25
+          // trial credits on four near-identical projects.
+          '2. Use edit-screenshots to refine THIS project (change copy, colours, layout). Prefer it over calling generate again: generate always starts a new project and re-bills.',
+          '3. Use render-screenshots to export final PNGs (needs a paid plan; trials can build and iterate but not export)',
+          '4. Or open the project URL in a browser to preview and adjust',
           '',
           imageErrors.length ? `Image read warnings:\n${imageErrors.join('\n')}` : '',
           chatData.suggestions?.length
@@ -435,7 +471,7 @@ server.registerTool(
       destructiveHint: true,
       openWorldHint: false,
     },
-    description: `Make changes to an existing screenshot project. Use natural language to describe what you want to change. Costs 5 credits per edit. You can also attach images: app screenshots fill the device frames of regenerated cards, a mascot (kind: "mascot") gets placed around the phones.
+    description: `Make changes to an existing screenshot project. Use natural language to describe what you want to change. Costs 5 credits per edit. You can also attach images: app screenshots fill the device frames of regenerated cards, a mascot (kind: "mascot") gets placed around the phones, and a background photo (kind: "background") goes behind the cards, one photo as a panorama or several as one per card.
 
 What you can change:
 - Text: headlines, subtitles, badge text, font size, font family (Inter, Poppins, Montserrat, DM Sans, Space Grotesk, etc.)
@@ -511,6 +547,10 @@ Example edit messages:
     }
 
     const { payload: chatImages, errors: imageErrors } = readImagesForChat(images);
+    const tooBig = imagesOverBudget(chatImages);
+    if (tooBig) {
+      return { content: [{ type: 'text' as const, text: tooBig }] };
+    }
     const res = await apiCall('POST', `/api/v1/projects/${project_id}/chat`, {
       message: enrichedMessage,
       selected_card_indices: card_indices || [],
@@ -568,13 +608,25 @@ server.registerTool(
       idempotentHint: true,
       openWorldHint: false,
     },
-    description: 'Export a screenshot project to high-resolution PNG files at exact App Store dimensions. Returns download URLs for each card; URLs stay valid for 7 days, so save the PNGs to disk promptly (re-rendering is free if a URL has expired). Free (no credit cost). Rendering blocks until the PNGs are ready: expect roughly 20-40s for iPhone sets and 60-120s for iPad (the larger canvas renders slower), so allow up to ~2 minutes before treating it as failed. Note: device mockups will show empty frames unless app screenshots have been uploaded via upload-screenshots first.',
+    description: 'Export a screenshot project to high-resolution PNG files at exact App Store dimensions. Returns download URLs for each card; URLs stay valid for 7 days, so save the PNGs to disk promptly (re-rendering is free if a URL has expired). Costs no credits, but export is unlocked by the first payment: on a trial this returns 402 PAYMENT_REQUIRED, so check the plan before promising a user their PNGs. Pass device_ids to get the same canvas at several device sizes in one call, re-laid-out for each, instead of building a second project: an App Store submission wants the 6.9-inch iPhone and, when the app supports iPad, the 13-inch iPad, and Google Play is a separate listing. Rendering blocks until the PNGs are ready: expect roughly 20-40s per iPhone set and 60-120s per iPad set (the larger canvas renders slower), and those add up per device, so allow up to ~2 minutes each before treating it as failed. Note: device mockups will show empty frames unless app screenshots have been uploaded via upload-screenshots first.',
     inputSchema: z.object({
       project_id: z.string().describe('Project ID to render'),
+      device_ids: z
+        .array(z.string())
+        .min(1)
+        .max(4)
+        .optional()
+        .describe(
+          'Optional. Render the same canvas at these device sizes instead of the project device. Each id is a full render, so up to 4. Use list-devices for valid ids.',
+        ),
     }),
   },
-  async ({ project_id }) => {
-    const res = await apiCall('POST', `/api/v1/projects/${project_id}/render`);
+  async ({ project_id, device_ids }) => {
+    const res = await apiCall(
+      'POST',
+      `/api/v1/projects/${project_id}/render`,
+      device_ids?.length ? { device_ids } : undefined,
+    );
 
     if (!res.ok) {
       return {
@@ -583,9 +635,16 @@ server.registerTool(
     }
 
     const data = res.data.data as {
-      images: Array<{ card_index: number; url: string; width: number; height: number; preview?: string }>;
+      images: Array<{ card_index: number; url: string; width: number; height: number; preview?: string; device_id?: string }>;
     };
     const images = data.images || [];
+    // With more than one device in the response, "Card 1" appears once per set,
+    // so the device has to be on the line or the URLs cannot be told apart.
+    const deviceCount = new Set(images.map((img) => img.device_id).filter(Boolean)).size;
+    const label = (img: { card_index: number; device_id?: string }, i: number) =>
+      deviceCount > 1 && img.device_id
+        ? `${img.device_id} card ${(img.card_index ?? i) + 1}`
+        : `Card ${i + 1}`;
 
     // Text block: full-resolution download URLs (for export / saving to disk).
     const content: Array<
@@ -595,9 +654,9 @@ server.registerTool(
       {
         type: 'text' as const,
         text: [
-          `Rendered ${images.length} screenshot${images.length === 1 ? '' : 's'}:`,
+          `Rendered ${images.length} screenshot${images.length === 1 ? '' : 's'}${deviceCount > 1 ? ` across ${deviceCount} device sizes` : ''}:`,
           '',
-          ...images.map((img, i) => `Card ${i + 1}: ${img.url} (${img.width}×${img.height})`),
+          ...images.map((img, i) => `${label(img, i)}: ${img.url} (${img.width}×${img.height})`),
           '',
           'Download URLs are valid for 7 days. Save the PNGs to disk now if you',
           'need them long-term (re-rendering later is free).',
@@ -631,6 +690,7 @@ server.registerTool(
     annotations: {
       // Reads a local constant; makes no API call at all.
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: false,
     },
     description: 'Show all supported device specs for App Store and Play Store screenshots. Use the device ID when generating screenshots.',
@@ -664,6 +724,7 @@ server.registerTool(
     title: 'Get Project Details',
     annotations: {
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: false,
     },
     description: `Retrieve the full state of a screenshot project, including all cards and their elements. Use this to inspect what was generated before making edits. Free: no credit cost.
@@ -742,7 +803,7 @@ server.registerTool(
       // Replaces the card's existing background.
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     description: `Generate an AI background image for a specific card using Gemini. The background is generated based on a text prompt and applied directly to the card. Costs 6 credits.
 
@@ -795,7 +856,7 @@ server.registerTool(
       // Replaces the background on every card in the span.
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     description: `Generate one wide background image and slice it across multiple cards so they read as a continuous scene when the App Store gallery scrolls. The store gallery gap is accounted for, so slices line up after Apple's gutter.
 
@@ -855,6 +916,7 @@ server.registerTool(
     title: 'Prepare Screenshot Brief',
     annotations: {
       readOnlyHint: true,
+      destructiveHint: false,
       openWorldHint: false,
     },
     description: `Get a category playbook and repo-research checklist to prepare for screenshot generation. Call this BEFORE generate-screenshots. Free (no credits).
@@ -1193,7 +1255,7 @@ Tips:
       `Project URL: ${API_BASE}/builder/${project_id}`,
       '',
       'Next steps:',
-      '- Use render-screenshots to export final PNGs',
+      '- Use render-screenshots to export final PNGs (needs a paid plan; trials can build and iterate but not export)',
       '- Use edit-screenshots to adjust the design',
       '- Open the project URL to preview in the browser',
     );

@@ -68,10 +68,11 @@ Call the `generate-screenshots` MCP tool with:
 - `count`: number of cards (3-10)
 - `story_flow`: `"auto"` (default), `"hero-intro"`, `"problem-solution"`, `"benefit-first"`, etc.
 - `codebase_context`: the full context object from Step 1
-- `images`: local file paths, each tagged with a `kind`. Three kinds, three destinations:
+- `images`: local file paths, each tagged with a `kind`. Four kinds, four destinations:
   - `kind: "screenshot"` (default): real app UI, placed inside the device frames automatically, in order. If screenshots exist in the repo (fastlane/screenshots, store assets, README images), attach them here so the set comes back with real UI in the phones instead of empty frames.
   - `kind: "mascot"`: the app's character, placed peeking from behind the hook card's phone and on the closing card. Transparent PNG.
   - `kind: "reference"`: a look to **match**, never placed in a frame. Use this for a competitor's App Store listing, a design the user pointed you at, or any image that already shows a phone with a headline above it. It is read for palette, type weight, headline length and composition.
+  - `kind: "background"`: the user's own photo, placed BEHIND the cards. One photo becomes a panorama across the first three cards (or the cards your message names); several become one per card, in order. Use it when the user wants their own arena, product or brand photo as the backdrop. Keep all images in a call under about 4MB encoded: shrink camera photos first (3840px long edge, JPEG).
 
 **Do not tag a competitor's store screenshots as `screenshot`.** They are finished marketing cards, so placing one inside a device frame nests a phone inside a phone and ships someone else's artwork. If the user says "make it look like X" and hands you X's listing, that is `kind: "reference"`. Their own raw captures are `kind: "screenshot"`, and a message can carry both.
 
@@ -86,7 +87,9 @@ If screenshots were attached in Step 3 they are already in the frames. This step
 
 This is conversational refinement, so iterate right here in the chat. Don't send the user away to look at links.
 
-1. **Show.** Call `render-screenshots` (free) after generating. It returns inline image previews, so the screenshots display directly in the conversation. Show them.
+**Rendering is unlocked by the first payment.** It costs no credits, and it does need an active paid plan: on a trial account every `render-screenshots` call returns 402 `PAYMENT_REQUIRED`. That gates the previews in this loop, not just the export in Step 6, so the whole show → refine → re-show rhythm below is a paid-plan rhythm. When you get a 402: say plainly that rendering needs a paid plan, share the project URL so the user can see the set in the builder, and keep refining from their description in chat. Do not retry the call, and do not spend more credits generating alternates the user still cannot see.
+
+1. **Show.** Call `render-screenshots` after generating (no credit cost). It returns inline image previews, so the screenshots display directly in the conversation. Show them.
 2. **Refine.** Let the user react in plain language and apply changes with `edit-screenshots`:
    - "Want any headlines or colors changed?"
    - "Should I add a social proof card with ratings?"
@@ -97,7 +100,7 @@ Hand off to the builder only when it genuinely helps: share the project URL and 
 
 ### Step 6: Export
 
-`render-screenshots` is also the export: it returns download URLs for the final PNGs at exact App Store dimensions, and it is free. Give the user those URLs and note they stay valid for 7 days, so download promptly (re-rendering later is free if a URL has expired). The builder project URL is the alternative when they want to compare the full set visually or hand-tweak before downloading.
+`render-screenshots` is also the export: it returns download URLs for the final PNGs at exact App Store dimensions, and it costs no credits. It needs the same active paid plan as Step 5, so on a trial this is where the user meets the paywall if they have not already. Give the user those URLs and note they stay valid for 7 days, so download promptly (re-rendering later is free if a URL has expired). The builder project URL is the alternative when they want to compare the full set visually or hand-tweak before downloading.
 
 ## Headline Rules
 
@@ -118,7 +121,7 @@ Headlines must pass the "one second test": readable at thumbnail size.
 | edit-screenshots | 5 credits |
 | generate-background | 6 credits |
 | upload-screenshots | free |
-| render-screenshots | free |
+| render-screenshots | free, and needs an active paid plan (402 on a trial) |
 | prepare-screenshot-brief | free |
 | list-devices | free |
 | get-project | free |

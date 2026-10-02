@@ -2,12 +2,12 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.appscreenshotstudio/mcp",
   "description": "Generate App Store and Play Store screenshots from your coding agent, at exact store sizes.",
-  "version": "0.8.1",
+  "version": "0.8.8",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@appscreenshotstudio/mcp",
-      "version": "0.8.1",
+      "version": "0.8.8",
       "transport": {
         "type": "stdio"
       },

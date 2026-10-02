@@ -1,0 +1,7 @@
+{
+  "appscreenshotstudio": {
+    "command": "npx",
+    "args": ["-y", "@appscreenshotstudio/mcp"],
+    "env_vars": ["APPSCREENSHOTSTUDIO_API_KEY"]
+  }
+}

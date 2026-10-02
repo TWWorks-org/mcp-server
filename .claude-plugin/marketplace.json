@@ -12,7 +12,7 @@
       "name": "appscreenshotstudio",
       "source": "./",
       "description": "Generate App Store and Play Store screenshots from your AI agent, then refine them by chatting. Needs an API key (Growth or Pro plan).",
-      "version": "0.8.1"
+      "version": "0.8.8"
     }
   ]
 }

@@ -95,6 +95,9 @@ Attach local image files as `{ file_path, kind }`. Max 5 per call. The `kind` de
 | `screenshot` (default) | Your real app UI, straight from a simulator or device | Inside the generated device frames, in attachment order |
 | `mascot` | Your app's character or logo creature | Decoratively around the phones (peeking from behind the hook card, beside the closing card). Use a transparent PNG |
 | `reference` | A look to **match**: a competitor's App Store listing, a design the user pointed you at, any image that already shows a phone with a headline above it | Nowhere. It is read for palette, type weight, headline length and composition, and never placed in a frame |
+| `background` | The user's own photo: an arena, a product shot, a brand photo, a still from their video | **Behind** the cards. One photo becomes one panorama across the first three cards (or the cards your message names, e.g. "across all of them"); several become one per card, in attachment order. Free: the photo is cut to fit, nothing is generated |
+
+The images in one call must stay under about 4MB encoded. The tool does not resize, and a photo straight off a camera is often bigger, so shrink it first (a 3840px long edge at JPEG quality 85 is plenty). An oversized call is refused before anything is sent, with no credits spent.
 
 **Do not send a competitor's store screenshots as `screenshot`.** They are finished marketing cards, so putting one inside a device frame nests a phone inside a phone and ships someone else's artwork into your listing. If the user says "make it look like this app" and hands you that app's listing, it is `reference`. Their own raw captures are `screenshot`. One call can carry both, and the reference ones are simply skipped when the frames get filled.
 
@@ -151,7 +154,10 @@ Export to high-resolution PNGs. Returns download URLs.
 |---|---|---|---|
 | `project_id` | string | Yes | Project to render |
 
-**Free.**
+**No credit cost, and it needs an active paid plan.** Rendering is unlocked by
+the first payment, so on a trial this returns 402 `PAYMENT_REQUIRED`. That
+applies to the inline previews an agent shows mid-loop as well as to the final
+export.
 
 ### `get-project`
 
@@ -239,7 +245,7 @@ The AI generates professional screenshots using:
 2. **Generate**: Agent calls `generate-screenshots` with `codebase_context` for app-specific designs
 3. **Iterate**: Agent calls `edit-screenshots` to refine (codebase context carries over automatically)
 4. **Upload**: Agent calls `upload-screenshots` with local file paths to fill device mockups
-5. **Export**: Agent calls `render-screenshots` or click "Download All" in the web app
+5. **Export**: Agent calls `render-screenshots` (needs a paid plan) or click "Download All" in the web app
 
 ## Security
 
@@ -262,7 +268,7 @@ Full policy: [appscreenshotstudio.com/privacy](https://appscreenshotstudio.com/p
 
 **Retention.** Projects persist in your account until you delete them. Rendered PNG download URLs expire after 7 days.
 
-**Contact.** [support@kindlebookillustrations.com](mailto:support@kindlebookillustrations.com)
+**Contact.** [contact@bookillustrationai.com](mailto:contact@bookillustrationai.com)
 
 ## Links
 
